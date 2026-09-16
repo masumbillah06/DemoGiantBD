@@ -1,0 +1,656 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+  DELETED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum PRODUCT_GENDER {
+  MALE
+  LADY
+  KIDS
+  JUNIOR
+  TWIN_JUNIOR
+}
+
+enum UnitOfMeasurement {
+  PAIR
+  LEFT
+  RIGHT
+}
+
+enum PackingType {
+  POLY_BAG
+}
+
+enum InventoryMovementType {
+  RECEIVED
+  SALE
+  TRANSFER
+  RETURN
+  DAMAGE
+  ADJUSTMENT
+}
+
+enum LCStatus {
+  OPEN
+  IN_PROGRESS
+  FULFILLED
+  EXPIRED
+  CANCELLED
+}
+
+enum POStatus {
+  DRAFT
+  CONFIRMED
+  IN_PRODUCTION
+  READY_FOR_SHIPMENT
+  PARTIALLY_SHIPPED
+  COMPLETED
+  CANCELLED
+}
+
+enum StockOutType {
+  PO_SHIPMENT
+  DIRECT_SALE
+  SAMPLE_DISPATCH
+  DAMAGE_SCRAP
+  INTERNAL_TRANSFER
+}
+
+enum StockOutStatus {
+  ISSUED
+  DELIVERED
+  PAYMENT_RECEIVED
+  CANCELLED
+}
+
+model User {
+  id        String  @id @default(cuid())
+  name      String
+  email     String  @unique
+  password  String
+  phone     String? @unique
+  gender    Gender
+  image     String?
+  signature String?
+  status    Status  @default(ACTIVE)
+
+  refreshHash String?
+
+  isTwoFactorEnabled Boolean   @default(false)
+  otpHash            String?
+  otpExpiresAt       DateTime?
+  otpAttempts        Int       @default(0)
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  createdProducts       VariantProduct[]
+  createdMasterProducts MasterProduct[]
+  issuedStockOuts       StockOut[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roleId])
+  @@index([status])
+}
+
+model Role {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+
+  status Status @default(ACTIVE)
+
+  isTwoFactorRequired Boolean @default(false)
+
+  users           User[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  module      String
+  description String?
+
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([module])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Category {
+  id   String @id @default(cuid())
+  name String @unique
+
+  status Status @default(ACTIVE)
+
+  subCategories   SubCategory[]
+  masterProducts  MasterProduct[]
+  variantProducts VariantProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model SubCategory {
+  id   String @id @default(cuid())
+  name String
+
+  status Status @default(ACTIVE)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  masterProducts  MasterProduct[]
+  variantProducts VariantProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@index([status])
+}
+
+model Material {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+
+  status Status @default(ACTIVE)
+
+  masterProducts MasterProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model MasterProduct {
+  id          String  @id @default(cuid())
+  name        String
+  sku         String  @unique
+  description String?
+
+  categoryId    String
+  subCategoryId String
+  materialId    String
+
+  category    Category    @relation(fields: [categoryId], references: [id])
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
+  material    Material    @relation(fields: [materialId], references: [id])
+
+  status    Status @default(ACTIVE)
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id])
+
+  variantProducts VariantProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([materialId])
+  @@index([creatorId])
+  @@index([status])
+}
+
+model Color {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  code        String?
+  description String?
+  status      Status  @default(ACTIVE)
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  variantProducts VariantProduct[]
+
+  @@index([status])
+}
+
+model VariantProduct {
+  id   String @id @default(cuid())
+  name String
+
+  sku     String @unique
+  barcode String @unique
+
+  size    String
+  colorId String
+  color   Color  @relation(fields: [colorId], references: [id])
+  gender  PRODUCT_GENDER
+
+  uom UnitOfMeasurement
+
+  itemsPerPacket Int
+
+  picture String?
+
+  costPrice    Float? @default(0)
+  sellingPrice Float? @default(0)
+  mrp          Float? @default(0)
+
+  packingType PackingType @default(POLY_BAG)
+  status      Status      @default(ACTIVE)
+
+  shippableQuantity Int @default(0)
+
+  masterProductId String
+  masterProduct   MasterProduct @relation(fields: [masterProductId], references: [id])
+
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id])
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  subCategoryId String
+  subCategory   SubCategory @relation(fields: [subCategoryId], references: [id])
+
+  batchItems    BatchItem[]
+  poItems       POItem[]
+  stockOutItems StockOutItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([masterProductId])
+  @@index([creatorId])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([status])
+  @@index([masterProductId, colorId, status])
+}
+
+model Batch {
+  id           String @id @default(cuid())
+  batch_id     String @unique
+  batch_number String
+
+  productionDate DateTime
+  expirationDate DateTime
+
+  poId String?
+  po   PO?     @relation(fields: [poId], references: [id])
+
+  batchItems BatchItem[]
+  documents  Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([batch_id, productionDate])
+  @@index([expirationDate])
+  @@index([poId])
+}
+
+model Document {
+  id       String  @id @default(cuid())
+  path     String
+  name     String
+  mimeType String?
+  size     Int?
+
+  batchId String?
+  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  stockOutId String?
+  stockOut   StockOut? @relation(fields: [stockOutId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([batchId])
+  @@index([stockOutId])
+}
+
+model BatchItem {
+  id String @id @default(cuid())
+
+  productId String
+  product   VariantProduct @relation(fields: [productId], references: [id])
+
+  batchId String
+  batch   Batch  @relation(fields: [batchId], references: [id])
+
+  locationId String
+  location   StorageLocation @relation(fields: [locationId], references: [id])
+
+  receivedQty  Int
+  availableQty Int
+
+  itemsPerPacket Int
+  packetCount    Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventoryMovements InventoryMovement[]
+  stockOutItems      StockOutItem[]
+
+  @@unique([productId, batchId, locationId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([locationId])
+  @@index([productId, availableQty])
+}
+
+model InventoryMovement {
+  id String @id @default(cuid())
+
+  inventoryBatchItemId String
+  inventoryBatchItem   BatchItem @relation(fields: [inventoryBatchItemId], references: [id])
+
+  type InventoryMovementType
+
+  quantity Int
+
+  referenceId String?
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([inventoryBatchItemId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([inventoryBatchItemId, createdAt])
+}
+
+model Warehouse {
+  id          String  @id @default(cuid())
+  name        String
+  code        String  @unique
+  description String?
+
+  status Status @default(ACTIVE)
+
+  zones     Zone[]
+  locations StorageLocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model Zone {
+  id          String  @id @default(cuid())
+  name        String
+  code        String
+  description String?
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  status Status @default(ACTIVE)
+
+  subZones  SubZone[]
+  locations StorageLocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId])
+  @@index([status])
+}
+
+model SubZone {
+  id          String  @id @default(cuid())
+  name        String
+  code        String
+  description String?
+
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+
+  status Status @default(ACTIVE)
+
+  racks     Rack[]
+  locations StorageLocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([zoneId, code])
+  @@index([zoneId])
+  @@index([status])
+}
+
+model Rack {
+  id          String  @id @default(cuid())
+  name        String
+  code        String
+  description String?
+
+  subZoneId String
+  subZone   SubZone @relation(fields: [subZoneId], references: [id])
+
+  status Status @default(ACTIVE)
+
+  locations StorageLocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subZoneId, code])
+  @@index([subZoneId])
+  @@index([status])
+}
+
+model StorageLocation {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String?
+  description String?
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+
+  subZoneId String?
+  subZone   SubZone? @relation(fields: [subZoneId], references: [id])
+
+  rackId String?
+  rack   Rack?   @relation(fields: [rackId], references: [id])
+
+  status Status @default(ACTIVE)
+
+  batchItems BatchItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([warehouseId])
+  @@index([zoneId])
+  @@index([subZoneId])
+  @@index([rackId])
+  @@index([status])
+}
+
+model Buyer {
+  id            String   @id @default(cuid())
+  name          String
+  code          String   @unique
+  email         String?
+  phone         String?
+  address       String?
+  country       String?
+  contactPerson String?
+  status        Status   @default(ACTIVE)
+
+  lcs            LC[]
+  purchaseOrders PO[]
+  stockOuts      StockOut[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([country])
+}
+
+model LC {
+  id           String    @id @default(cuid())
+  lcNumber     String    @unique
+  buyerId      String
+  buyer        Buyer     @relation(fields: [buyerId], references: [id])
+  issueDate    DateTime?
+  expiryDate   DateTime?
+  shipmentDate DateTime?
+  status       LCStatus  @default(OPEN)
+  remarks      String?
+
+  purchaseOrders PO[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([shipmentDate])
+}
+
+model PO {
+  id            String    @id @default(cuid())
+  poNumber      String    @unique
+  buyerId       String
+  buyer         Buyer     @relation(fields: [buyerId], references: [id])
+  lcId          String?
+  lc            LC?       @relation(fields: [lcId], references: [id])
+  orderDate     DateTime  @default(now())
+  deliveryDate  DateTime?
+  totalQuantity Int       @default(0)
+  status        POStatus  @default(DRAFT)
+  remarks       String?
+
+  items     POItem[]
+  batches   Batch[]
+  stockOuts StockOut[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId])
+  @@index([lcId])
+  @@index([status])
+  @@index([orderDate])
+  @@index([deliveryDate])
+  @@index([status, orderDate])
+}
+
+model POItem {
+  id               String         @id @default(cuid())
+  poId             String
+  po               PO             @relation(fields: [poId], references: [id], onDelete: Cascade)
+  variantProductId String
+  variantProduct   VariantProduct @relation(fields: [variantProductId], references: [id])
+  quantity         Int
+  producedQuantity Int            @default(0)
+  shippedQuantity  Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poId])
+  @@index([variantProductId])
+}
+
+model StockOut {
+  id              String         @id @default(cuid())
+  challanNumber   String         @unique
+  type            StockOutType   @default(PO_SHIPMENT)
+  status          StockOutStatus @default(ISSUED)
+  partialSequence Int?           @default(1)
+  dispatchDate    DateTime       @default(now())
+
+  poId String?
+  po   PO?     @relation(fields: [poId], references: [id])
+
+  buyerId String?
+  buyer   Buyer?  @relation(fields: [buyerId], references: [id])
+
+  destination     String?
+  note            String?
+  receiptDocument String?
+
+  issuerId String
+  issuer   User   @relation(fields: [issuerId], references: [id])
+
+  items     StockOutItem[]
+  documents Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poId])
+  @@index([buyerId])
+  @@index([type])
+  @@index([status])
+  @@index([dispatchDate])
+  @@index([createdAt])
+}
+
+model StockOutItem {
+  id         String   @id @default(cuid())
+  stockOutId String
+  stockOut   StockOut @relation(fields: [stockOutId], references: [id], onDelete: Cascade)
+
+  variantProductId String
+  variantProduct   VariantProduct @relation(fields: [variantProductId], references: [id])
+
+  batchItemId String
+  batchItem   BatchItem @relation(fields: [batchItemId], references: [id])
+
+  quantity Int
+
+  createdAt DateTime @default(now())
+
+  @@index([stockOutId])
+  @@index([variantProductId])
+  @@index([batchItemId])
+}

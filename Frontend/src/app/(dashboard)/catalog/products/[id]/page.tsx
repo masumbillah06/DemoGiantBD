@@ -1,0 +1,463 @@
+'use client';
+
+import { useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '@/lib/api';
+import { MasterProduct, VariantProduct } from '@/types/catalog';
+import { BulkVariantModal } from '@/components/catalog/bulk-variant-modal';
+import { EditVariantModal } from '@/components/catalog/edit-variant-modal';
+import { DataPagination } from '@/components/common/data-pagination';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { toast } from 'sonner';
+import { formatNumber, getFileUrl } from '@/lib/utils';
+import NextLink from 'next/link';
+import {
+  Package,
+  ArrowLeft,
+  Wand2,
+  Plus,
+  Edit2,
+  Barcode,
+  Layers,
+  AlertTriangle,
+  Loader2,
+  Trash2,
+  Upload,
+  Image as ImageIcon,
+  CheckCircle2,
+  X,
+  AlertCircle,
+} from 'lucide-react';
+
+export default function ProductDetailPage() {
+  const params = useParams();
+  const id = params?.id as string;
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [selectedVariantForEdit, setSelectedVariantForEdit] = useState<VariantProduct | null>(null);
+  const [variantToDelete, setVariantToDelete] = useState<VariantProduct | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Fetch Master Product with Variants
+  const { data: productData, isLoading } = useQuery({
+    queryKey: ['master-product-detail', id],
+    queryFn: async () => {
+      const res = await api.get(`/master-products/${id}`);
+      return res.data?.data;
+    },
+    enabled: !!id,
+  });
+
+  // Soft-Delete Variant Mutation
+  const deleteVariantMutation = useMutation({
+    mutationFn: async (variantId: string) => {
+      await api.delete(`/variants/${variantId}`);
+    },
+    onSuccess: () => {
+      toast.success('Variant deactivated successfully');
+      queryClient.invalidateQueries({ queryKey: ['master-product-detail', id] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-data'] });
+      setVariantToDelete(null);
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.message || 'Failed to deactivate variant');
+    },
+  });
+
+  const product: MasterProduct | undefined = productData;
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600 mb-3" />
+        <p className="text-xs font-medium text-slate-500">Loading variant matrix...</p>
+      </div>
+    );
+  }
+
+  if (!product) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <AlertCircle className="h-10 w-10 text-rose-500 mb-2" />
+        <h3 className="text-base font-bold text-slate-900">Product Not Found</h3>
+        <p className="text-xs text-slate-500 mt-1 mb-4">
+          The requested product style could not be located.
+        </p>
+        <NextLink
+          href="/catalog/products"
+          className="btn-giant-primary inline-flex items-center rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-[#3b66b7]/20"
+        >
+          Back to Catalog
+        </NextLink>
+      </div>
+    );
+  }
+
+  const variants: VariantProduct[] = product.variantProducts || [];
+  const totalVariants = variants.length;
+  const totalPages = Math.ceil(totalVariants / pageSize) || 1;
+  const paginatedVariants = variants.slice((page - 1) * pageSize, page * pageSize);
+
+  // Compute Total Inventory & Low Stock Items
+  let totalShippable = 0;
+  let lowStockCount = 0;
+
+  variants.forEach((v) => {
+    const qty = v.shippableQuantity || 0;
+    totalShippable += qty;
+    if (qty < 30) {
+      lowStockCount++;
+    }
+  });
+
+  return (
+    <div className="space-y-6 mx-auto pb-12">
+      {/* Top Header & Breadcrumb */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => router.push('/catalog/products')}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded-md">
+                {product.sku}
+              </span>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                {product.name}
+              </h1>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Category: <strong className="text-slate-700">{product.category?.name}</strong>
+              {product.material && <> • Material: <strong className="text-slate-700">{product.material.name}</strong></>}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsBulkModalOpen(true)}
+          className="btn-giant-primary"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Create variant products</span>
+        </button>
+      </div>
+
+      {/* Metric Cards Banner */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="card-giant p-5.5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Total Active Variants
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {variants.length} <span className="text-sm font-normal text-slate-500">sizes/SKUs</span>
+          </div>
+        </div>
+
+        <div className="card-giant p-5.5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Total In-Hand Stock
+          </div>
+          <div className="mt-2 text-2xl font-bold text-emerald-700">
+            {formatNumber(totalShippable)} <span className="text-sm font-normal text-slate-500">pairs</span>
+          </div>
+        </div>
+
+        <div className="card-giant p-5.5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Low Stock Alerts (&lt; 30 pairs)
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className={`text-2xl font-bold ${lowStockCount > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
+              {lowStockCount}
+            </span>
+            <span className="text-xs text-slate-500">
+              {lowStockCount > 0 ? 'sizes require replenishment' : 'all well-stocked'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Variant Matrix Table */}
+      <div className="card-giant overflow-hidden">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold text-slate-900">
+              Variant Products
+            </h3>
+            <span className="badge-giant">
+              {variants.length} Records
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsBulkModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-[#f4f7fc] px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-[#3b66b7]/8 hover:text-[#3b66b7] transition cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5 text-[#3b66b7]" />
+            <span>Create variant products</span>
+          </button>
+        </div>
+
+        {variants.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <Package className="h-10 w-10 text-slate-300 mb-2" />
+            <h4 className="text-sm font-bold text-slate-800">No variant products created yet</h4>
+            <p className="text-xs text-slate-500 mt-1 max-w-sm">
+              Use the variant creator to automatically create sizes with color and gender classifications.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsBulkModalOpen(true)}
+              className="mt-4 btn-giant-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-[#3b66b7]/20 transition cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Create variant products</span>
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs min-w-[1050px]">
+                <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 backdrop-blur-xs text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3.5">Image</th>
+                    <th className="px-5 py-3.5">Master Product</th>
+                    <th className="px-5 py-3.5">Category</th>
+                    <th className="px-5 py-3.5">Variant SKU & Barcode</th>
+                    <th className="px-5 py-3.5">Material</th>
+                    <th className="px-5 py-3.5">Color</th>
+                    <th className="px-5 py-3.5">Size & Gender</th>
+                    <th className="px-5 py-3.5">UOM</th>
+                    <th className="px-5 py-3.5 text-center">Products / Pkt</th>
+                    <th className="px-5 py-3.5 text-right">In-Hand Stock</th>
+                    <th className="px-5 py-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {paginatedVariants.map((v) => {
+                    const isLow = (v.shippableQuantity || 0) < 30;
+                    return (
+                      <tr key={v.id} className="hover:bg-slate-50/70 transition-colors">
+                        {/* Image Thumbnail */}
+                        <td className="px-5 py-3.5">
+                          {v.picture ? (
+                            <img
+                              src={getFileUrl(v.picture)}
+                              alt={v.name}
+                              className="h-9 w-9 rounded-lg object-cover border border-slate-200 cursor-pointer"
+                              onClick={() => setSelectedVariantForEdit(v)}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedVariantForEdit(v)}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-dashed border-slate-300 text-slate-400 hover:border-blue-400 hover:text-blue-600 transition cursor-pointer"
+                              title="Edit variant & picture"
+                            >
+                              <ImageIcon className="h-4 w-4" />
+                            </button>
+                          )}
+                        </td>
+
+                        {/* Master Style */}
+                        <td className="px-5 py-3.5">
+                          <div className="font-bold text-slate-900 text-xs">
+                            {product.name}
+                          </div>
+                        </td>
+
+                        {/* Category */}
+                        <td className="px-5 py-3.5">
+                          <span className="inline-flex rounded-md bg-[#3b66b7]/10 border border-[#3b66b7]/20 px-2 py-0.5 text-xs font-semibold text-[#3b66b7]">
+                            {product.category?.name || '—'}
+                          </span>
+                          {product.subCategory?.name && (
+                            <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                              {product.subCategory.name}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* SKU & Barcode */}
+                        <td className="px-5 py-3.5">
+                          <div className="font-mono font-bold text-slate-900 text-xs">
+                            {v.sku}
+                          </div>
+                          {v.barcode && (
+                            <div className="flex items-center gap-1 font-mono text-[10px] text-slate-500 mt-0.5">
+                              <Barcode className="h-3 w-3 text-slate-400" />
+                              <span>{v.barcode}</span>
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Material */}
+                        <td className="px-5 py-3.5 font-medium">
+                          {product.material?.name ? (
+                            <span className="rounded-md bg-amber-50 border border-amber-200/60 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                              {product.material.name}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+
+                        {/* Color */}
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-2">
+                            {v.color?.code && (
+                              <span
+                                className="h-3 w-3 rounded-full border border-slate-300 shadow-2xs shrink-0"
+                                style={{ backgroundColor: v.color.code }}
+                              />
+                            )}
+                            <span className="font-bold text-slate-800">
+                              {v.color?.name || 'Color N/A'}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Size & Gender */}
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-800">
+                              Size {v.size}
+                            </span>
+                            <span className="text-slate-400">•</span>
+                            <span className="text-[11px] text-slate-600 uppercase font-semibold">
+                              {v.gender}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* UOM */}
+                        <td className="px-5 py-3.5">
+                          <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-700">
+                            {v.uom || 'PAIR'}
+                          </span>
+                        </td>
+
+                        {/* Products Per Packet */}
+                        <td className="px-5 py-3.5 text-center font-semibold text-slate-800">
+                          <span>{v.itemsPerPacket || 1}</span>
+                          <span className="text-[10px] text-slate-400 ml-1">/pkt</span>
+                        </td>
+
+                        {/* In-Hand Stock */}
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="inline-flex items-center gap-1.5 justify-end">
+                            <span
+                              className={`font-bold text-sm ${isLow ? 'text-amber-600' : 'text-slate-900'
+                                }`}
+                            >
+                              {formatNumber(v.shippableQuantity)}
+                            </span>
+                            <span className="text-slate-400 text-xs font-normal">prs</span>
+                            {isLow && (
+                              <span title="Low stock alert (< 30 pairs)">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedVariantForEdit(v)}
+                              title="Edit Variant Product"
+                              aria-label={`Edit variant size ${v.size}`}
+                              className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setVariantToDelete(v)}
+                              title="Deactivate Variant"
+                              aria-label={`Deactivate variant size ${v.size}`}
+                              className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Unified Pagination Toolbar */}
+            <DataPagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalCount={totalVariants}
+              pageSize={pageSize}
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => setPageSize(s)}
+              pageSizeOptions={[10, 20, 50, 100]}
+            />
+          </>
+        )}
+      </div>
+
+      {/* Bulk Generator Modal */}
+      <BulkVariantModal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        onSuccess={() => {
+          toast.success('Variants generated successfully');
+          queryClient.invalidateQueries({ queryKey: ['master-product-detail', id] });
+        }}
+        masterProductId={product.id}
+        masterSku={product.sku}
+      />
+
+      {/* Edit Variant Modal */}
+      <EditVariantModal
+        isOpen={!!selectedVariantForEdit}
+        onClose={() => setSelectedVariantForEdit(null)}
+        variant={selectedVariantForEdit}
+        onSuccess={() => {
+          toast.success('Variant updated successfully');
+          queryClient.invalidateQueries({ queryKey: ['master-product-detail', id] });
+        }}
+      />
+
+      {/* Accessible Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={Boolean(variantToDelete)}
+        onClose={() => setVariantToDelete(null)}
+        onConfirm={async () => {
+          if (variantToDelete) {
+            await deleteVariantMutation.mutateAsync(variantToDelete.id);
+          }
+        }}
+        title="Deactivate Variant Product"
+        description={
+          <>
+            Are you sure you want to deactivate variant SKU <strong className="text-slate-900 font-mono">{variantToDelete?.sku}</strong> (Size EU {variantToDelete?.size})?
+          </>
+        }
+        confirmText="Deactivate Variant"
+        variant="danger"
+        isLoading={deleteVariantMutation.isPending}
+      />
+    </div>
+  );
+}

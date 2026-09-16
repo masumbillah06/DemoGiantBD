@@ -1,0 +1,370 @@
+'use client';
+
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '@/lib/api';
+import { LC } from '@/types/commercial';
+import { LcDrawer } from '@/components/commercial/lc-drawer';
+import { DataPagination, ConfirmDialog, TableSkeleton, EmptyState } from '@/components/common';
+import { toast } from 'sonner';
+import { formatDate } from '@/lib/utils';
+import {
+  FileText,
+  Search,
+  Plus,
+  Edit2,
+  Trash2,
+  RotateCcw,
+  Loader2,
+  ShoppingBag,
+} from 'lucide-react';
+
+export default function LcPage() {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [selectedLc, setSelectedLc] = useState<LC | null>(null);
+  const [lcToDelete, setLcToDelete] = useState<LC | null>(null);
+
+  // Fetch LC List
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['lc-list', page, pageSize, search, statusFilter],
+    queryFn: async () => {
+      const res = await api.get('/lc', {
+        params: {
+          page,
+          per_page: pageSize,
+          search: search.trim() || undefined,
+          status: statusFilter || undefined,
+        },
+      });
+      return res.data?.data;
+    },
+  });
+
+  // Delete Mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/lc/${id}`);
+    },
+    onSuccess: () => {
+      toast.success('LC cancelled successfully');
+      queryClient.invalidateQueries({ queryKey: ['lc-list'] });
+      setLcToDelete(null);
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.message || 'Failed to cancel LC');
+    },
+  });
+
+  // Restore Mutation
+  const restoreMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await api.post(`/lc/${id}/restore`);
+    },
+    onSuccess: () => {
+      toast.success('LC reopened successfully');
+      queryClient.invalidateQueries({ queryKey: ['lc-list'] });
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.message || 'Failed to reopen LC');
+    },
+  });
+
+  const lcs: LC[] = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data)
+      ? data
+      : [];
+
+  const totalPages = data?.total_page || 1;
+  const totalCount = data?.total || lcs.length;
+
+  const handleOpenCreate = () => {
+    setSelectedLc(null);
+    setIsDrawerOpen(true);
+  };
+
+  const handleOpenEdit = (lc: LC) => {
+    setSelectedLc(lc);
+    setIsDrawerOpen(true);
+  };
+
+  // Helper for Status Badge
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'OPEN':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'IN_PROGRESS':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'FULFILLED':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'CANCELLED':
+        return 'bg-slate-100 text-slate-600 border-slate-200';
+      default:
+        return 'bg-slate-50 text-slate-700 border-slate-200';
+    }
+  };
+
+  return (
+    <div className="space-y-6 mx-auto pb-10">
+      {/* Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              Letters of Credit (LC) Tracker
+            </h1>
+            <span className="badge-giant">
+              {totalCount} Total
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            Manage commercial Letter of Credit contracts and linked purchase orders
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleOpenCreate}
+          className="btn-giant-primary"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Open New LC</span>
+        </button>
+      </div>
+
+      {/* Filter & Search Bar */}
+      <div className="card-giant flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5">
+        <div className="relative flex-1 w-full sm:max-w-md">
+          <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search by LC number or remarks..."
+            className="input-giant pl-9"
+          />
+        </div>
+
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-xl border border-slate-200/80 bg-[#f4f7fc] px-3.5 py-2 text-xs font-semibold text-slate-700 focus:border-[#3b66b7]/50 focus:bg-white focus:outline-hidden"
+          >
+            <option value="">All Statuses</option>
+            <option value="OPEN">OPEN</option>
+            <option value="IN_PROGRESS">IN PROGRESS</option>
+            <option value="FULFILLED">FULFILLED</option>
+            <option value="EXPIRED">EXPIRED</option>
+            <option value="CANCELLED">CANCELLED</option>
+          </select>
+
+          {isFetching && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#3b66b7]" />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* LC Data Table */}
+      <div className="card-giant overflow-hidden">
+        {isLoading ? (
+          <TableSkeleton
+            rows={6}
+            columns={['20%', '22%', '24%', '14%', '10%', '10%']}
+          />
+        ) : lcs.length === 0 ? (
+          <EmptyState
+            icon={<FileText className="h-7 w-7" />}
+            title={search || statusFilter ? 'No matching LCs found' : 'No Letters of Credit yet'}
+            description={
+              search || statusFilter
+                ? 'No Letters of Credit match your filter criteria. Try resetting your search or status filter.'
+                : 'Create your first commercial Letter of Credit to manage buyer export contracts.'
+            }
+            action={
+              search || statusFilter
+                ? {
+                  label: 'Reset Filters',
+                  onClick: () => {
+                    setSearch('');
+                    setStatusFilter('');
+                    setPage(1);
+                  },
+                  variant: 'secondary',
+                }
+                : {
+                  label: 'Open New LC',
+                  onClick: handleOpenCreate,
+                  icon: <Plus className="h-3.5 w-3.5" />,
+                }
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs min-w-[750px]">
+              <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 backdrop-blur-xs text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-5 py-3.5">LC Number</th>
+                  <th className="px-5 py-3.5">Buyer</th>
+                  <th className="px-5 py-3.5">Remarks / Details</th>
+                  <th className="px-5 py-3.5">Linked POs</th>
+                  <th className="px-5 py-3.5">Status</th>
+                  <th className="px-5 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {lcs.map((lc) => {
+                  const isCancelled = lc.status === 'CANCELLED';
+                  return (
+                    <tr
+                      key={lc.id}
+                      className={`hover:bg-slate-50/70 transition-colors ${isCancelled ? 'bg-slate-50/40 opacity-70' : ''
+                        }`}
+                    >
+                      {/* LC Number */}
+                      <td className="px-5 py-4 font-mono font-bold text-slate-900">
+                        <span className="inline-flex rounded-lg bg-[#3b66b7]/10 px-2.5 py-1 text-[11px] font-bold text-[#3b66b7] border border-[#3b66b7]/20">
+                          {lc.lcNumber}
+                        </span>
+                      </td>
+
+                      {/* Buyer */}
+                      <td className="px-5 py-4">
+                        <div className="font-bold text-slate-900">
+                          {lc.buyer?.name || 'Unknown Buyer'}
+                        </div>
+                        {lc.buyer?.code && (
+                          <div className="text-[11px] text-slate-400">
+                            Code: {lc.buyer.code}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Remarks */}
+                      <td className="px-5 py-4 text-slate-600 max-w-xs truncate">
+                        {lc.remarks || <span className="text-slate-400 italic">No notes</span>}
+                      </td>
+
+                      {/* Linked POs */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-1.5 text-slate-700 font-semibold">
+                          <ShoppingBag className="h-3.5 w-3.5 text-[#3b66b7]" />
+                          <span>{lc._count?.purchaseOrders || lc.purchaseOrders?.length || 0} POs</span>
+                        </div>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${getStatusBadge(
+                            lc.status,
+                          )}`}
+                        >
+                          {lc.status}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-5 py-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {!isCancelled ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEdit(lc)}
+                                title="Edit LC"
+                                aria-label={`Edit LC ${lc.lcNumber}`}
+                                className="rounded-lg p-2 text-slate-400 hover:bg-[#3b66b7]/10 hover:text-[#3b66b7] transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLcToDelete(lc)}
+                                title="Cancel LC"
+                                aria-label={`Cancel LC ${lc.lcNumber}`}
+                                className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => restoreMutation.mutate(lc.id)}
+                              title="Restore LC"
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 transition cursor-pointer min-h-[36px]"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              <span>Restore</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Unified Pagination Toolbar */}
+        <DataPagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPageChange={(p) => setPage(p)}
+          onPageSizeChange={(s) => setPageSize(s)}
+          pageSizeOptions={[10, 20, 50, 100]}
+        />
+      </div>
+
+      {/* Slide-over Create/Edit Drawer */}
+      <LcDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        onSuccess={() => {
+          toast.success(selectedLc ? 'LC updated successfully' : 'LC created successfully');
+          queryClient.invalidateQueries({ queryKey: ['lc-list'] });
+        }}
+        lcToEdit={selectedLc}
+      />
+
+      {/* Accessible Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={Boolean(lcToDelete)}
+        onClose={() => setLcToDelete(null)}
+        onConfirm={async () => {
+          if (lcToDelete) {
+            await deleteMutation.mutateAsync(lcToDelete.id);
+          }
+        }}
+        title="Cancel Letter of Credit"
+        description={
+          <>
+            Are you sure you want to cancel LC <strong className="text-slate-900">{lcToDelete?.lcNumber}</strong>?
+            This will mark the contract as cancelled.
+          </>
+        }
+        confirmText="Cancel LC"
+        variant="danger"
+        isLoading={deleteMutation.isPending}
+      />
+    </div>
+  );
+}
