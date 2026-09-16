@@ -31,5 +31,5 @@ COPY --from=build /app/prisma.config.ts ./prisma.config.ts
 
 RUN mkdir -p uploads
 
-EXPOSE 3005
+EXPOSE 3006
 CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma generate && npx prisma db seed && node dist/src/main"]
